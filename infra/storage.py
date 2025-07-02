@@ -72,40 +72,19 @@ class Storage:
         if not filename:
             raise ValueError("Filename not specified")
 
-        try:
-            bucket = self._get_bucket()
-            blob = bucket.get_blob(filename)
-            if blob is None:
-                raise FileNotFoundError("File not found in bucket")
-            return blob.download_as_text()
-
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(f"[Storage] Failed to download '{filename}': {e.message}")
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(f"[Storage] Unexpected error in download '{filename}': {e}")
-            return None
+        bucket = self._get_bucket()
+        blob = bucket.get_blob(filename)
+        if blob is None:
+            raise FileNotFoundError("File not found in bucket")
+        return blob.download_as_text()
 
     def exists(self, filename: Optional[str] = None) -> Optional[bool]:
         if not filename:
             raise ValueError("Filename not specified")
 
-        try:
-            bucket = self._get_bucket()
-            blob = bucket.get_blob(filename)
-            return blob is not None
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(
-                    f"[Storage] Error checking existence of '{filename}': {e.message}"
-                )
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(f"[Storage] Unexpected error in exists('{filename}'): {e}")
-            return None
+        bucket = self._get_bucket()
+        blob = bucket.get_blob(filename)
+        return blob is not None
 
     def upload_text(
         self,
@@ -119,25 +98,15 @@ class Storage:
         if text is None:
             raise ValueError("Text content not provided")
 
-        try:
-            bucket = self._get_bucket()
-            blob = bucket.blob(filename)
-            kwargs = {"content_type": content_type} if content_type else {}
-            blob.upload_from_string(text, **kwargs)
+        bucket = self._get_bucket()
+        blob = bucket.blob(filename)
+        kwargs = {"content_type": content_type} if content_type else {}
+        blob.upload_from_string(text, **kwargs)
 
-            if generate_public_url:
-                blob.make_public()
+        if generate_public_url:
+            blob.make_public()
 
-            return blob.public_url
-
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(f"[Storage] Failed to upload text to '{filename}': {e.message}")
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(f"[Storage] Unexpected error uploading text to '{filename}': {e}")
-            return None
+        return blob.public_url
 
     def upload_data(
         self,
@@ -151,47 +120,23 @@ class Storage:
         if data is None:
             raise ValueError("Binary data not provided")
 
-        try:
-            bucket = self._get_bucket()
-            blob = bucket.blob(filename)
-            kwargs = {"content_type": content_type} if content_type else {}
-            blob.upload_from_string(data, **kwargs)
+        bucket = self._get_bucket()
+        blob = bucket.blob(filename)
+        kwargs = {"content_type": content_type} if content_type else {}
+        blob.upload_from_string(data, **kwargs)
 
-            if generate_public_url:
-                blob.make_public()
+        if generate_public_url:
+            blob.make_public()
 
-            return blob.public_url
-
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(
-                    f"[Storage] Failed to upload binary data to '{filename}': {e.message}"
-                )
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(
-                    f"[Storage] Unexpected error uploading binary data to '{filename}': {e}"
-                )
-            return None
+        return blob.public_url
 
     def list_files(self, filepath: Optional[str] = None) -> Optional[list[str]]:
         if filepath is None:
             raise ValueError("Filepath not specified")
 
-        try:
-            bucket = self._get_bucket()
-            all_blobs = list(self._client.list_blobs(bucket, prefix=filepath))
-            return [blob.name for blob in all_blobs]
-
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(f"[Storage] Failed to list files at '{filepath}': {e.message}")
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(f"[Storage] Unexpected error listing files at '{filepath}': {e}")
-            return None
+        bucket = self._get_bucket()
+        all_blobs = list(self._client.list_blobs(bucket, prefix=filepath))
+        return [blob.name for blob in all_blobs]
 
     def generate_url_signed(
         self,
@@ -203,32 +148,18 @@ class Storage:
         if expiration_time is None:
             expiration_time = self._SIGNED_URL_EXPIRATION_MINUTES
 
-        try:
-            bucket = self._get_bucket()
-            blob = bucket.get_blob(filename)
-            if blob is None:
-                raise FileNotFoundError("File does not exist in bucket")
+        bucket = self._get_bucket()
+        blob = bucket.get_blob(filename)
+        if blob is None:
+            raise FileNotFoundError("File does not exist in bucket")
 
-            url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(minutes=expiration_time),
-                method="GET",
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=expiration_time),
+            method="GET",
+        )
+        if self.verbose:
+            print(
+                f"[Storage] Signed URL generated for '{filename}' ({expiration_time} min)"
             )
-            if self.verbose:
-                print(
-                    f"[Storage] Signed URL generated for '{filename}' ({expiration_time} min)"
-                )
-            return url
-
-        except GoogleAPIError as e:
-            if self.verbose:
-                print(
-                    f"[Storage] Failed to generate signed URL for '{filename}': {e.message}"
-                )
-            return None
-        except Exception as e:
-            if self.verbose:
-                print(
-                    f"[Storage] Unexpected error generating signed URL for '{filename}': {e}"
-                )
-            return None
+        return url
