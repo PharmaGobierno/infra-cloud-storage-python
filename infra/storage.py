@@ -2,17 +2,16 @@ import os
 from datetime import timedelta
 from typing import Optional
 
-from google.api_core.exceptions import GoogleAPIError
 from google.cloud import storage
 from google.oauth2 import service_account
 
 
 class Storage:
     """
-    Google Cloud Storage wrapper class.
+    Google Cloud Storage wrapper class compatible with Cloud Run.
     """
 
-    __version__ = "1.0"
+    __version__ = "1.1"
 
     _ENV_DEFAULT_BUCKET_NAME = "DEFAULT_BUCKET_NAME"
     _ENV_GOOGLE_CLOUD_PROJECT = "GOOGLE_CLOUD_PROJECT"
@@ -33,125 +32,93 @@ class Storage:
 
         self._project_id = project_id or os.getenv(self._ENV_GOOGLE_CLOUD_PROJECT)
 
-        self._client: Optional[storage.Client] = None
+        self._client: storage.Client = self._create_storage_client(service_account_path)
         self._bucket: Optional[storage.Bucket] = None
-
-        self._client = self._create_storage_client(service_account_path)
 
     def _create_storage_client(
         self, service_account_path: Optional[str]
     ) -> storage.Client:
-        kwargs = {}
-
         if service_account_path:
             credentials = service_account.Credentials.from_service_account_file(
                 service_account_path,
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
-            kwargs["credentials"] = credentials
-
             if not self._project_id:
                 self._project_id = credentials.project_id
-
-        if self._project_id:
-            kwargs["project"] = self._project_id
+            if self.verbose:
+                print("[Storage] Using service account credentials from file")
+            return storage.Client(credentials=credentials, project=self._project_id)
 
         if self.verbose:
-            print(f"[Storage] Initializing GCS client with: {kwargs}")
+            print("[Storage] Using default credentials (Cloud Run, etc.)")
+        return storage.Client(project=self._project_id)
 
-        return storage.Client(**kwargs)
-
-    def _get_bucket(self) -> Optional[storage.Bucket]:
+    def _get_bucket(self) -> storage.Bucket:
         if self._bucket is None:
             if self.verbose:
                 print(f"[Storage] Fetching bucket instance: {self.bucket_name}")
             self._bucket = self._client.bucket(self.bucket_name)
         return self._bucket
 
-    def download_as_text(self, filename: Optional[str] = None) -> Optional[str]:
-        if not filename:
-            raise ValueError("Filename not specified")
-
+    def download_as_text(self, filename: str) -> str:
         bucket = self._get_bucket()
         blob = bucket.get_blob(filename)
         if blob is None:
-            raise FileNotFoundError("File not found in bucket")
+            raise FileNotFoundError(f"File '{filename}' not found in bucket")
         return blob.download_as_text()
 
-    def exists(self, filename: Optional[str] = None) -> Optional[bool]:
-        if not filename:
-            raise ValueError("Filename not specified")
-
+    def exists(self, filename: str) -> bool:
         bucket = self._get_bucket()
-        blob = bucket.get_blob(filename)
-        return blob is not None
+        return bucket.get_blob(filename) is not None
 
     def upload_text(
         self,
-        filename: Optional[str] = None,
-        text: Optional[str] = None,
+        filename: str,
+        text: str,
         generate_public_url: bool = False,
         content_type: Optional[str] = None,
     ) -> Optional[str]:
-        if not filename:
-            raise ValueError("Filename not specified")
-        if text is None:
-            raise ValueError("Text content not provided")
-
         bucket = self._get_bucket()
         blob = bucket.blob(filename)
-        kwargs = {"content_type": content_type} if content_type else {}
-        blob.upload_from_string(text, **kwargs)
+        blob.upload_from_string(text, content_type=content_type)
 
         if generate_public_url:
             blob.make_public()
-
-        return blob.public_url
+            return blob.public_url
+        return None
 
     def upload_data(
         self,
-        filename: Optional[str] = None,
-        data: Optional[bytes] = None,
+        filename: str,
+        data: bytes,
         generate_public_url: bool = False,
         content_type: Optional[str] = None,
     ) -> Optional[str]:
-        if not filename:
-            raise ValueError("Filename not specified")
-        if data is None:
-            raise ValueError("Binary data not provided")
-
         bucket = self._get_bucket()
         blob = bucket.blob(filename)
-        kwargs = {"content_type": content_type} if content_type else {}
-        blob.upload_from_string(data, **kwargs)
+        blob.upload_from_string(data, content_type=content_type)
 
         if generate_public_url:
             blob.make_public()
+            return blob.public_url
+        return None
 
-        return blob.public_url
-
-    def list_files(self, filepath: Optional[str] = None) -> Optional[list[str]]:
-        if filepath is None:
-            raise ValueError("Filepath not specified")
-
+    def list_files(self, filepath: str) -> list[str]:
         bucket = self._get_bucket()
         all_blobs = list(self._client.list_blobs(bucket, prefix=filepath))
         return [blob.name for blob in all_blobs]
 
     def generate_url_signed(
         self,
-        filename: Optional[str] = None,
+        filename: str,
         expiration_time: int = None,
-    ) -> Optional[str]:
-        if not filename:
-            raise ValueError("Filename not specified")
-        if expiration_time is None:
-            expiration_time = self._SIGNED_URL_EXPIRATION_MINUTES
+    ) -> str:
+        expiration_time = expiration_time or self._SIGNED_URL_EXPIRATION_MINUTES
 
         bucket = self._get_bucket()
         blob = bucket.get_blob(filename)
         if blob is None:
-            raise FileNotFoundError("File does not exist in bucket")
+            raise FileNotFoundError(f"File '{filename}' does not exist in bucket")
 
         url = blob.generate_signed_url(
             version="v4",
@@ -159,7 +126,5 @@ class Storage:
             method="GET",
         )
         if self.verbose:
-            print(
-                f"[Storage] Signed URL generated for '{filename}' ({expiration_time} min)"
-            )
+            print(f"[Storage] Signed URL for '{filename}' valid {expiration_time} min")
         return url
