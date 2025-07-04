@@ -6,10 +6,12 @@ import google.auth
 from google.auth import impersonated_credentials
 from google.cloud import storage
 
-from .exceptions import BlobNotFoudException
-
 SIGNED_URL_EXPIRATION_MINUTES = 120
 ENV_SA_SIGNER = "IMPERSONATED_SIGNER_SA_EMAIL"
+
+
+class BlobNotFoudException(Exception):
+    pass
 
 
 class Storage:
@@ -57,7 +59,7 @@ class Storage:
             raise ValueError(f"The default value for {name} was not found in ENV FILE")
         return value
 
-    def get_bucket(self, bucket_name: str) -> Optional[storage.Bucket]:
+    def get_bucket(self, bucket_name: str) -> storage.Bucket:
         return self._client.bucket(bucket_name)
 
     def generate_signed_url(
