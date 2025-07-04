@@ -1,9 +1,15 @@
-import os
 from datetime import timedelta
+from os import getenv
 from typing import Optional
 
+import google.auth
+from google.auth import impersonated_credentials
 from google.cloud import storage
-from google.oauth2 import service_account
+
+from .exceptions import BlobNotFoudException
+
+SIGNED_URL_EXPIRATION_MINUTES = 120
+ENV_SA_SIGNER = "IMPERSONATED_SIGNER_SA_EMAIL"
 
 
 class Storage:
@@ -11,120 +17,64 @@ class Storage:
     Google Cloud Storage wrapper class compatible with Cloud Run.
     """
 
-    __version__ = "1.1"
-
-    _ENV_DEFAULT_BUCKET_NAME = "DEFAULT_BUCKET_NAME"
-    _ENV_GOOGLE_CLOUD_PROJECT = "GOOGLE_CLOUD_PROJECT"
-    _SIGNED_URL_EXPIRATION_MINUTES = 60
+    __version__ = "1.2.0"
 
     def __init__(
         self,
-        bucket_name: Optional[str] = None,
-        service_account_path: Optional[str] = None,
-        project_id: Optional[str] = None,
+        impersonated_signer_sa_email: Optional[str] = None,
         verbose: bool = False,
     ):
         self.verbose = verbose
 
-        self.bucket_name = bucket_name or os.getenv(self._ENV_DEFAULT_BUCKET_NAME)
-        if not self.bucket_name:
-            raise ValueError("Bucket name not specified")
+        self.impersonated_signer_sa_email = impersonated_signer_sa_email
+        self._client: storage.Client = self.__create_storage_client()
 
-        self._project_id = project_id or os.getenv(self._ENV_GOOGLE_CLOUD_PROJECT)
+    def __create_storage_client(self) -> storage.Client:
+        source_credentials, _ = google.auth.default()  # service credentials
+        if self.impersonated_signer_sa_email is None:
+            # return Client with service credential authorization
+            return storage.Client(credentials=source_credentials)
+        target_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+        impersonated_creds = impersonated_credentials.Credentials(
+            source_credentials=source_credentials,
+            target_principal=self.impersonated_signer_sa_email,
+            target_scopes=target_scopes,
+            lifetime=3600,
+        )
+        # return Client with impersonated creds authorization
+        return storage.Client(credentials=impersonated_creds)
 
-        self._client: storage.Client = self._create_storage_client(service_account_path)
-        self._bucket: Optional[storage.Bucket] = None
+    def _get_default_env(self, name: str) -> str:
+        """
+        Look for values in enviroment file.
+        :param name: The name to look in env
+        :type name: str
+        :return: Value given the name
+        :rtype: str
+        """
+        value: Optional[str] = getenv(name)
+        if value is None:
+            raise ValueError(f"The default value for {name} was not found in ENV FILE")
+        return value
 
-    def _create_storage_client(
-        self, service_account_path: Optional[str]
-    ) -> storage.Client:
-        if service_account_path:
-            credentials = service_account.Credentials.from_service_account_file(
-                service_account_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-            if not self._project_id:
-                self._project_id = credentials.project_id
-            if self.verbose:
-                print("[Storage] Using service account credentials from file")
-            return storage.Client(credentials=credentials, project=self._project_id)
+    def get_bucket(self, bucket_name: str) -> Optional[storage.Bucket]:
+        return self._client.bucket(bucket_name)
 
-        if self.verbose:
-            print("[Storage] Using default credentials (Cloud Run, etc.)")
-        return storage.Client(project=self._project_id)
-
-    def _get_bucket(self) -> storage.Bucket:
-        if self._bucket is None:
-            if self.verbose:
-                print(f"[Storage] Fetching bucket instance: {self.bucket_name}")
-            self._bucket = self._client.bucket(self.bucket_name)
-        return self._bucket
-
-    def download_as_text(self, filename: str) -> str:
-        bucket = self._get_bucket()
+    def generate_signed_url(
+        self,
+        filename: str,
+        *,
+        bucket: storage.Bucket,
+        expiration_minutes: Optional[int] = None,
+    ) -> Optional[str]:
+        if expiration_minutes is None:
+            expiration_minutes = SIGNED_URL_EXPIRATION_MINUTES
         blob = bucket.get_blob(filename)
         if blob is None:
-            raise FileNotFoundError(f"File '{filename}' not found in bucket")
-        return blob.download_as_text()
-
-    def exists(self, filename: str) -> bool:
-        bucket = self._get_bucket()
-        return bucket.get_blob(filename) is not None
-
-    def upload_text(
-        self,
-        filename: str,
-        text: str,
-        generate_public_url: bool = False,
-        content_type: Optional[str] = None,
-    ) -> Optional[str]:
-        bucket = self._get_bucket()
-        blob = bucket.blob(filename)
-        blob.upload_from_string(text, content_type=content_type)
-
-        if generate_public_url:
-            blob.make_public()
-            return blob.public_url
-        return None
-
-    def upload_data(
-        self,
-        filename: str,
-        data: bytes,
-        generate_public_url: bool = False,
-        content_type: Optional[str] = None,
-    ) -> Optional[str]:
-        bucket = self._get_bucket()
-        blob = bucket.blob(filename)
-        blob.upload_from_string(data, content_type=content_type)
-
-        if generate_public_url:
-            blob.make_public()
-            return blob.public_url
-        return None
-
-    def list_files(self, filepath: str) -> list[str]:
-        bucket = self._get_bucket()
-        all_blobs = list(self._client.list_blobs(bucket, prefix=filepath))
-        return [blob.name for blob in all_blobs]
-
-    def generate_url_signed(
-        self,
-        filename: str,
-        expiration_time: int = None,
-    ) -> str:
-        expiration_time = expiration_time or self._SIGNED_URL_EXPIRATION_MINUTES
-
-        bucket = self._get_bucket()
-        blob = bucket.get_blob(filename)
-        if blob is None:
-            raise FileNotFoundError(f"File '{filename}' does not exist in bucket")
-
+            raise BlobNotFoudException(f"File '{filename}' does not exist in bucket")
         url = blob.generate_signed_url(
             version="v4",
-            expiration=timedelta(minutes=expiration_time),
+            expiration=timedelta(minutes=expiration_minutes),
             method="GET",
         )
-        if self.verbose:
-            print(f"[Storage] Signed URL for '{filename}' valid {expiration_time} min")
         return url

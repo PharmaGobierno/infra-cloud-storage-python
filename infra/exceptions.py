@@ -1,0 +1,2 @@
+class BlobNotFoudException(Exception):
+    pass

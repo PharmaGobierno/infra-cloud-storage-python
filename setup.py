@@ -1,4 +1,5 @@
 import os
+
 import setuptools
 
 with open("README.md", "r", encoding="utf8") as fh:
@@ -14,7 +15,7 @@ LIB_NAME: str = "infra-storage-python"
 
 setuptools.setup(
     name=LIB_NAME,
-    version="1.0.0",
+    version="1.2.0",
     author="Luis Gerardo Fosado Baños GrupoSid's Tech",
     author_email="developers@gruposid.com.mx",
     description="Infrastructure Storage Library",
