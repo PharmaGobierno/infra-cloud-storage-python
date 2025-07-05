@@ -28,7 +28,9 @@ class Storage:
     ):
         self.verbose = verbose
 
-        self.impersonated_signer_sa_email = impersonated_signer_sa_email
+        self.impersonated_signer_sa_email = (
+            impersonated_signer_sa_email or self._get_default_env(ENV_SA_SIGNER)
+        )
         self._client: storage.Client = self.__create_storage_client()
 
     def __create_storage_client(self) -> storage.Client:
